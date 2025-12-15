@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"strings"
 
 	"golang.org/x/tools/go/packages"
 )
@@ -107,6 +108,7 @@ func processFuncBody(body *ast.BlockStmt, g *Graph, pkg *packages.Package, ctx *
 	ast.Inspect(body, func(n ast.Node) bool {
 		switch node := n.(type) {
 		case *ast.CallExpr:
+			// Direct call
 			callName := getCallName(node, pkg, ctx)
 			if callName == "" {
 				return true
@@ -118,17 +120,59 @@ func processFuncBody(body *ast.BlockStmt, g *Graph, pkg *packages.Package, ctx *
 			}
 
 			g.AddNode(callName)
-			g.AddEdge(caller, callName)
+			edgeType := NormalCall
+			if isClosureCall(callName, ctx) {
+				edgeType = ClosureCall
+			}
+			g.AddEdge(caller, callName, edgeType)
+
+		case *ast.DeferStmt:
+			// defer call
+			callName := getCallName(node.Call, pkg, ctx)
+			if callName == "" {
+				return true
+			}
+
+			caller := ctx.currentScope
+			if caller == "" {
+				return true
+			}
+
+			g.AddNode(callName)
+			g.AddEdge(caller, callName, DeferCall)
+
+		case *ast.GoStmt:
+			// go call
+			callName := getCallName(node.Call, pkg, ctx)
+			if callName == "" {
+				return true
+			}
+
+			caller := ctx.currentScope
+			if caller == "" {
+				return true
+			}
+
+			g.AddNode(callName)
+			g.AddEdge(caller, callName, GoCall)
 
 		case *ast.AssignStmt:
 			processAssignments(node, g, pkg, ctx)
 
 		case *ast.FuncLit:
-			// Inner closures
 			return false
 		}
 		return true
 	})
+}
+
+func isClosureCall(callName string, ctx *analysisContext) bool {
+	for _, binding := range ctx.varBindings {
+		if binding == callName {
+			return true
+		}
+	}
+	return strings.Contains(callName, "closure")
 }
 
 func processAssignments(assign *ast.AssignStmt, g *Graph, pkg *packages.Package, ctx *analysisContext) {
