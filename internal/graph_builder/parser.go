@@ -18,7 +18,8 @@ type Config struct {
 type analysisContext struct {
 	pkg          *packages.Package
 	currentScope string
-	varBindings  map[string]string // имя переменной -> полное имя замыкания
+	varBindings  map[string]string
+	seenCalls    map[ast.Node]bool
 }
 
 func newAnalysisContext(pkg *packages.Package, scope string) *analysisContext {
@@ -26,6 +27,7 @@ func newAnalysisContext(pkg *packages.Package, scope string) *analysisContext {
 		pkg:          pkg,
 		currentScope: scope,
 		varBindings:  make(map[string]string),
+		seenCalls:    make(map[ast.Node]bool),
 	}
 }
 
@@ -109,6 +111,9 @@ func processFuncBody(body *ast.BlockStmt, g *Graph, pkg *packages.Package, ctx *
 		switch node := n.(type) {
 		case *ast.CallExpr:
 			// Direct call
+			if ctx.seenCalls[n] {
+				return true
+			}
 			callName := getCallName(node, pkg, ctx)
 			if callName == "" {
 				return true
@@ -128,6 +133,7 @@ func processFuncBody(body *ast.BlockStmt, g *Graph, pkg *packages.Package, ctx *
 
 		case *ast.DeferStmt:
 			// defer call
+			call := node.Call
 			callName := getCallName(node.Call, pkg, ctx)
 			if callName == "" {
 				return true
@@ -140,9 +146,11 @@ func processFuncBody(body *ast.BlockStmt, g *Graph, pkg *packages.Package, ctx *
 
 			g.AddNode(callName)
 			g.AddEdge(caller, callName, DeferCall)
+			ctx.seenCalls[call] = true
 
 		case *ast.GoStmt:
 			// go call
+			call := node.Call
 			callName := getCallName(node.Call, pkg, ctx)
 			if callName == "" {
 				return true
@@ -155,6 +163,7 @@ func processFuncBody(body *ast.BlockStmt, g *Graph, pkg *packages.Package, ctx *
 
 			g.AddNode(callName)
 			g.AddEdge(caller, callName, GoCall)
+			ctx.seenCalls[call] = true
 
 		case *ast.AssignStmt:
 			processAssignments(node, g, pkg, ctx)
